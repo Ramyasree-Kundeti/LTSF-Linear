@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
@@ -37,7 +39,7 @@ class EarlyStopping:
         self.counter = 0
         self.best_score = None
         self.early_stop = False
-        self.val_loss_min = np.Inf
+        self.val_loss_min = np.inf
         self.delta = delta
 
     def __call__(self, val_loss, model, path):
@@ -107,3 +109,25 @@ def test_params_flop(model,x_shape):
         # print('Params:' + params)
         print('{:<30}  {:<8}'.format('Computational complexity: ', macs))
         print('{:<30}  {:<8}'.format('Number of parameters: ', params))
+
+
+def visualize_data(x_time,x_vals,x_mask):
+    print("In visualize_data")
+    feature_indices = [0, 1, 2]  # choose a few features
+    name="./pic/check.pdf"
+
+    plt.figure(figsize=(10, 6))
+    print("x_time",x_time.shape)
+    print("x_vals ",x_vals[:,:,1].shape)
+    for f in feature_indices:
+        plt.plot(x_time, x_vals[:,:, f], label=f'Feature {f}')
+        print("written to plot")
+
+    plt.title('Line Plot of Selected Features Over Time')
+    plt.xlabel('Time Step')
+    plt.ylabel('Feature Value')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(name), exist_ok=True)
+    plt.savefig(name, bbox_inches='tight')

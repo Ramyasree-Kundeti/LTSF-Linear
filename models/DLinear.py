@@ -42,7 +42,9 @@ class Model(nn.Module):
     def __init__(self, configs):
         super(Model, self).__init__()
         self.seq_len = configs.seq_len
+        print("self.seq_len",self.seq_len)
         self.pred_len = configs.pred_len
+        print("self.pred_len",self.pred_len)
 
         # Decompsition Kernel Size
         kernel_size = 25
@@ -72,6 +74,7 @@ class Model(nn.Module):
     def forward(self, x):
         # x: [Batch, Input length, Channel]
         seasonal_init, trend_init = self.decompsition(x)
+        #print("seasonal_init, trend_init",seasonal_init.shape, trend_init.shape)
         seasonal_init, trend_init = seasonal_init.permute(0,2,1), trend_init.permute(0,2,1)
         if self.individual:
             seasonal_output = torch.zeros([seasonal_init.size(0),seasonal_init.size(1),self.pred_len],dtype=seasonal_init.dtype).to(seasonal_init.device)
@@ -80,6 +83,8 @@ class Model(nn.Module):
                 seasonal_output[:,i,:] = self.Linear_Seasonal[i](seasonal_init[:,i,:])
                 trend_output[:,i,:] = self.Linear_Trend[i](trend_init[:,i,:])
         else:
+            #print("seasonal_init, trend_init",seasonal_init.shape, trend_init.shape)
+            #print("self.seq_len,self.pred_len",self.seq_len,self.pred_len)
             seasonal_output = self.Linear_Seasonal(seasonal_init)
             trend_output = self.Linear_Trend(trend_init)
 

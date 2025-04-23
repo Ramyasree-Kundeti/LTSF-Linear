@@ -1,5 +1,7 @@
 import numpy as np
 
+import torch
+
 
 def RSE(pred, true):
     return np.sqrt(np.sum((true - pred) ** 2)) / np.sqrt(np.sum((true - true.mean()) ** 2))
@@ -18,6 +20,9 @@ def MAE(pred, true):
 
 def MSE(pred, true):
     return np.mean((pred - true) ** 2)
+
+def MSE_NEW(y,y_hat,mask):
+    return torch.sum(mask * ((y - y_hat) ** 2)) / torch.sum(mask)
 
 
 def RMSE(pred, true):
