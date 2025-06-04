@@ -26,6 +26,7 @@ from tsdm.datasets import Physionet2012 as Physionet2012_Dataset
 from tsdm.encoders import FrameEncoder, MinMaxScaler, Standardizer
 from tsdm.tasks.base import BaseTask
 from tsdm.utils import is_partition
+from tsdm.utils._util import interpolate_missing_limited
 from tsdm.utils.strings import repr_namedtuple
 
 
@@ -49,6 +50,8 @@ class Sample(NamedTuple):
     targets: Tensor
     originals: tuple[Tensor, Tensor]
     observation_steps: int
+    lp: bool
+    lpn: int
 
     def __repr__(self) -> str:
         r"""Return string representation."""
@@ -77,7 +80,9 @@ class TaskDataset(Dataset):
     tensors: list[tuple[Tensor, Tensor]]
     observation_time: float
     prediction_steps: int
-    observation_steps:int
+    observation_steps: int
+    lp: bool
+    lpn: int
 
     def __len__(self) -> int:
         r"""Return the number of samples in the dataset."""
@@ -104,19 +109,15 @@ class TaskDataset(Dataset):
         #print("sample_mask", sample_mask)
         target_mask = slice(first_target, first_target + self.prediction_steps)
         #print("target_mask",target_mask)
-        #sample_length =self.
-        #target_length = self.prediction_steps
-        #max_first_target = len(t) - target_length
-        #first_target = min(observations.sum() - 1, max_firsct_target)
 
-        #sample_mask = slice(max(0, first_target - sample_length), first_target)
-        #target_mask = slice(first_target, first_target + target_length)
         return Sample(
             key=key,
             inputs=Inputs(t[sample_mask], x[sample_mask], t[target_mask]),
             targets=x[target_mask],
             originals=(t, x),
-            observation_steps=self.observation_steps
+            observation_steps=self.observation_steps,
+            lp=self.lp,
+            lpn=self.lpn
         )
 
     def __repr__(self) -> str:
@@ -135,10 +136,14 @@ def physionet_collate(batch: list[Sample]) -> Batch:
     y_time: list[Tensor] = []
     x_mask: list[Tensor] = []
     y_mask: list[Tensor] = []
-
+    lpn = 0
+    lp = False
+    print("collate function is called")
     for sample in batch:
         t, x, t_target = sample.inputs
         y = sample.targets
+        lp = sample.lp
+        lpn = sample.lpn
         #print("inside physiocollate self.observation_steps ",sample.observation_steps)
 
         # get whole time interval
@@ -158,8 +163,6 @@ def physionet_collate(batch: list[Sample]) -> Batch:
         #)
         #values = torch.cat((x, x_padding))
 
-
-
         # create a mask for looking up the target values
 
 
@@ -169,14 +172,20 @@ def physionet_collate(batch: list[Sample]) -> Batch:
         y_time.append(t_target)
         y_vals.append(y)
 
+    x_time = pad_sequence(x_time, batch_first=True).squeeze()
     x_vals = pad_sequence(x_vals, batch_first=True, padding_value=NAN).squeeze()
     x_mask = torch.isfinite(x_vals)
 
     y_vals = pad_sequence(y_vals, batch_first=True, padding_value=NAN).squeeze()
     y_mask = torch.isfinite(y_vals)
 
+    print("Before Data Interpolation")
+    if lp:
+        x_vals = interpolate_missing_limited(x_time,x_vals, x_mask, lpn,False)
+        print("After Data Interpolation")
+
     return Batch(
-        x_time=pad_sequence(x_time, batch_first=True).squeeze(),
+        x_time,
         x_vals=torch.nan_to_num(x_vals),
         x_mask=x_mask,
         y_time=pad_sequence(y_time, batch_first=True).squeeze(),
@@ -198,11 +207,13 @@ class Physionet2012(BaseTask):
     encoder: FrameEncoder[Standardizer, dict[Any, MinMaxScaler]]
 
     def __init__(
-        self,
-        normalize_time: bool = True,
-        condition_time: int = 36,
-        forecast_horizon: int = 0,
-        num_folds: int = 5,
+            self,
+            normalize_time: bool = True,
+            condition_time: int = 36,
+            forecast_horizon: int = 0,
+            num_folds: int = 5,
+            lp: bool = False,
+            lpn: int = 0
     ):
         super().__init__()
         # prediction steps is 3 by default, otherwise it is the number of hours to predict in future
@@ -216,12 +227,17 @@ class Physionet2012(BaseTask):
         #print("self.observation_time class Physionet2012(BaseTask) init",self.observation_time)
         self.num_folds = num_folds
         #print("self.num_folds",self.num_folds)
+        self.lp = lp
+        self.lpn = lpn
+
+
         self.encoder = FrameEncoder(
             column_encoders=Standardizer(),
             index_encoders={"Time": MinMaxScaler()},
         )
         self.normalize_time = normalize_time
         self.IDs = self.dataset.reset_index()["RecordID"].unique()
+
     @cached_property
     def dataset(self) -> DataFrame:
         r"""Load the dataset."""
@@ -244,7 +260,7 @@ class Physionet2012(BaseTask):
         ts = self.encoder.encode(ts)
         index_encoder = self.encoder.index_encoders["Time"]
         self.observation_time /= index_encoder.param.xmax  # type: ignore[assignment]
-        print("self.observation_time in def dataset ",self.observation_time)
+        print("self.observation_time in def dataset ", self.observation_time)
         # drop values outside 5 sigma range
         ts = ts[(-5 < ts) & (ts < 5)]
         ts = ts.dropna(axis=1, how="all").copy()
@@ -364,7 +380,7 @@ class Physionet2012(BaseTask):
         return tensors
 
     def get_dataloader(
-        self, key: tuple[int, str], /, **dataloader_kwargs: Any
+            self, key: tuple[int, str], /, **dataloader_kwargs: Any
     ) -> DataLoader:
         #print("IN p12 dataloader")
         r"""Return the dataloader for the given key."""
@@ -376,12 +392,13 @@ class Physionet2012(BaseTask):
             [val for idx, val in self.tensors.items() if idx in fold_idx],
             observation_time=self.observation_time,
             prediction_steps=self.prediction_steps,
-            observation_steps=self.observation_steps
+            observation_steps=self.observation_steps,
+            lp=self.lp,
+            lpn=self.lpn
         )
         kwargs: dict[str, Any] = {"collate_fn": lambda *x: x} | dataloader_kwargs
         #print("DataLoader completed",kwargs)
         return DataLoader(dataset, **kwargs)
-
 
 # Remark: The following code is found in the repo:
 #

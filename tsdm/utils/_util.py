@@ -24,9 +24,12 @@ __all__ = [
     "round_relative",
     "pairwise_disjoint",
     "pairwise_disjoint_masks",
+    "interpolate_missing_limited",
 ]
 
+import json
 import os
+import random
 from collections.abc import Callable, Collection, Hashable, Iterable, Mapping, Sequence
 from datetime import datetime
 from functools import partial
@@ -36,6 +39,8 @@ from pathlib import Path
 from typing import Any, Literal, NamedTuple, Optional, Union, overload
 
 import numpy as np
+import torch
+from matplotlib import pyplot as plt
 from numpy.typing import NDArray
 from torch import nn
 
@@ -60,12 +65,12 @@ def pairwise_disjoint_masks(masks: Iterable[NDArray[np.bool_]]) -> bool:
 
 
 def flatten_dict(
-    d: dict[Any, Any],
-    /,
-    *,
-    join_string: Optional[str] = None,
-    key_func: Optional[Callable[[Hashable, Hashable], Hashable]] = None,
-    recursive: bool | int = True,
+        d: dict[Any, Any],
+        /,
+        *,
+        join_string: Optional[str] = None,
+        key_func: Optional[Callable[[Hashable, Hashable], Hashable]] = None,
+        recursive: bool | int = True,
 ) -> dict[Any, Any]:
     r"""Flatten a dictionary containing iterables to a list of tuples.
 
@@ -118,8 +123,8 @@ def round_relative(x: np.ndarray, decimals: int = 2) -> np.ndarray:
     r"""Round to relative precision."""
     order = np.where(x == 0, 0, np.floor(np.log10(x)))
     digits = decimals - order
-    rounded = np.rint(x * 10**digits)
-    return np.true_divide(rounded, 10**digits)
+    rounded = np.rint(x * 10 ** digits)
+    return np.true_divide(rounded, 10 ** digits)
 
 
 def now():
@@ -172,9 +177,9 @@ def deep_kval_update(d: dict, **new_kvals: dict) -> dict:
 
 
 def apply_nested(
-    nested: Nested[AnyTypeVar | None],
-    kind: type[AnyTypeVar],
-    func: Callable[[AnyTypeVar], ReturnVar],
+        nested: Nested[AnyTypeVar | None],
+        kind: type[AnyTypeVar],
+        func: Callable[[AnyTypeVar], ReturnVar],
 ) -> Nested[ReturnVar | None]:
     r"""Apply function to nested iterables of a given kind.
 
@@ -198,39 +203,39 @@ def apply_nested(
 
 @overload
 def prepend_path(
-    files: Nested[PathType],
-    parent: Path,
-    *,
-    keep_none: bool = False,
+        files: Nested[PathType],
+        parent: Path,
+        *,
+        keep_none: bool = False,
 ) -> Nested[Path]:
     ...
 
 
 @overload
 def prepend_path(
-    files: Nested[Optional[PathType]],
-    parent: Path,
-    *,
-    keep_none: Literal[False] = False,
+        files: Nested[Optional[PathType]],
+        parent: Path,
+        *,
+        keep_none: Literal[False] = False,
 ) -> Nested[Path]:
     ...
 
 
 @overload
 def prepend_path(
-    files: Nested[Optional[PathType]],
-    parent: Path,
-    *,
-    keep_none: Literal[True] = True,
+        files: Nested[Optional[PathType]],
+        parent: Path,
+        *,
+        keep_none: Literal[True] = True,
 ) -> Nested[Optional[Path]]:
     ...
 
 
 def prepend_path(
-    files: Nested[Optional[PathType]],
-    parent: Path,
-    *,
-    keep_none: bool = False,
+        files: Nested[Optional[PathType]],
+        parent: Path,
+        *,
+        keep_none: bool = False,
 ) -> Nested[Optional[Path]]:
     r"""Prepends path to all files in nested iterable.
 
@@ -300,10 +305,10 @@ def initialize_from_config(config: dict[str, Any]) -> nn.Module:
 # partial from type
 @overload
 def initialize_from(  # type: ignore[misc]
-    lookup_table: dict[str, type[ObjectVar]],
-    /,
-    __name__: str,
-    **kwargs: Any,
+        lookup_table: dict[str, type[ObjectVar]],
+        /,
+        __name__: str,
+        **kwargs: Any,
 ) -> ObjectVar:
     ...
 
@@ -311,10 +316,10 @@ def initialize_from(  # type: ignore[misc]
 # partial from func
 @overload
 def initialize_from(
-    lookup_table: dict[str, Callable[..., ReturnVar]],
-    /,
-    __name__: str,
-    **kwargs: Any,
+        lookup_table: dict[str, Callable[..., ReturnVar]],
+        /,
+        __name__: str,
+        **kwargs: Any,
 ) -> Callable[..., ReturnVar]:
     ...
 
@@ -331,14 +336,14 @@ def initialize_from(
 
 
 def initialize_from(  # type: ignore[misc]
-    lookup_table: Union[
-        dict[str, type[ObjectVar]],
-        dict[str, Callable[..., ReturnVar]],
-        dict[str, type[ObjectVar] | Callable[..., ReturnVar]],
-    ],
-    /,
-    __name__: str,
-    **kwargs: Any,
+        lookup_table: Union[
+            dict[str, type[ObjectVar]],
+            dict[str, Callable[..., ReturnVar]],
+            dict[str, type[ObjectVar] | Callable[..., ReturnVar]],
+        ],
+        /,
+        __name__: str,
+        **kwargs: Any,
 ) -> ObjectVar | Callable[..., ReturnVar]:
     r"""Lookup class/function from dictionary and initialize it.
 
@@ -416,9 +421,9 @@ def initialize_module_from_config(config: dict[str, Any]) -> nn.Module:
 
 
 def paths_exists(
-    paths: Nested[Optional[PathType]],
-    *,
-    parent: Path = EMPTY_PATH,
+        paths: Nested[Optional[PathType]],
+        *,
+        parent: Path = EMPTY_PATH,
 ) -> bool:
     r"""Check whether the files exist.
 
@@ -445,3 +450,164 @@ def paths_exists(
         return (parent / paths).exists()
 
     raise ValueError(f"Unknown type for rawdata_file: {type(paths)}")
+
+
+import json
+import os
+
+
+def save_metadata(metadata: dict, filename: str = "interpolation_metadata.json"):
+    filepath = os.path.join("./pic/interpolation_plots", filename)
+
+    # Load existing metadata if file exists
+    if os.path.exists(filepath):
+        with open(filepath, "r") as f:
+            try:
+                existing = json.load(f)
+            except json.JSONDecodeError:
+                existing = []
+    else:
+        existing = []
+
+    # Append new metadatac
+    existing.append(metadata)
+
+    # Save updated metadata
+    with open(filepath, "w") as f:
+        json.dump(existing, f, indent=2)
+
+def interpolate_missing_limited(
+    x_time: torch.Tensor,
+    x_vals: torch.Tensor,
+    x_mask: torch.Tensor,
+    max_interp_points: int,
+    plot: bool = False,
+    plot_dir: str = "./pic/interpolation_plots",
+    fallback_value: float = 0.0
+) -> torch.Tensor:
+    """
+    Interpolate missing values at evenly spaced time indices. Keep only those values.
+    Use original values if available, otherwise interpolate. Fall back to `fallback_value` if needed.
+
+    Args:
+        x_time (torch.Tensor): [time] Time indices
+        x_vals (torch.Tensor): [batch, time, features]
+        x_mask (torch.Tensor): [batch, time, features] boolean mask (True=observed)
+        max_interp_points (int): Number of evenly spaced indices to keep per sample-feature
+        plot (bool): Whether to generate plots
+        plot_dir (str): Directory to save plots
+        fallback_value (float): Value to use if interpolation is not possible
+
+    Returns:
+        torch.Tensor: [batch, max_interp_points, features]
+    """
+    if plot:
+        os.makedirs(plot_dir, exist_ok=True)
+
+    x_vals_np = x_vals.cpu().numpy()
+    x_mask_np = x_mask.cpu().numpy()
+    x_time_np = x_time.cpu().numpy()
+    batch_size, time_steps, features = x_vals_np.shape
+
+    # Evenly spaced time indices to retain (0-based)
+    split_indices = np.floor(np.linspace(0, time_steps - 1, num=max_interp_points)).astype(int).tolist()
+
+    # Output tensor initialized with fallback
+    output_np = np.full((batch_size, max_interp_points, features), fallback_value, dtype=x_vals_np.dtype)
+
+    for b in range(batch_size):
+        for f in range(features):
+            series = x_vals_np[b, :, f]
+            mask = x_mask_np[b, :, f]
+            valid_idx = np.where(mask & np.isfinite(series))[0]  # exclude NaNs/infs
+
+            if len(valid_idx) < 1:
+                continue  # No data to interpolate or fill
+
+            values = []
+            interp_flags = []
+
+            for idx in split_indices:
+                if mask[idx] and np.isfinite(series[idx]):
+                    # Use original valid value
+                    values.append(np.array(series[idx], dtype=series.dtype))
+                    interp_flags.append(False)
+                else:
+                    # Find nearest valid neighbors
+                    left_candidates = valid_idx[valid_idx < idx]
+                    right_candidates = valid_idx[valid_idx > idx]
+
+                    if len(left_candidates) > 0 and len(right_candidates) > 0:
+                        x0 = left_candidates[-1]
+                        x1 = right_candidates[0]
+                        y0 = series[x0]
+                        y1 = series[x1]
+                        if np.isfinite(y0) and np.isfinite(y1) and x1 != x0:
+                            interpolated = y0 + (idx - x0) / (x1 - x0) * (y1 - y0)
+                            values.append(np.array(interpolated, dtype=series.dtype))
+                        else:
+                            values.append(np.array(fallback_value, dtype=series.dtype))
+                        interp_flags.append(True)
+                    elif len(left_candidates) > 0:
+                        # Forward-fill using previous value
+                        y0 = series[left_candidates[-1]]
+                        values.append(np.array(y0, dtype=series.dtype))
+                        interp_flags.append(True)
+                    elif len(right_candidates) > 0:
+                        # Backward-fill using next value
+                        y1 = series[right_candidates[0]]
+                        values.append(np.array(y1, dtype=series.dtype))
+                        interp_flags.append(True)
+                    else:
+                        # No valid values found
+                        values.append(np.array(fallback_value, dtype=series.dtype))
+                        interp_flags.append(True)
+
+            output_np[b, :, f] = np.array(values, dtype=series.dtype)
+
+            # Plotting
+            if plot:
+                plt.figure(figsize=(10, 4))
+                time = np.arange(time_steps)
+
+                # Plot known values in blue
+                plt.scatter(valid_idx, series[valid_idx], color="blue", label="Original Known", s=30)
+
+                final_values = output_np[b, :, f]
+                interp_idx = [i for i, flag in enumerate(interp_flags) if flag]
+                orig_idx = [i for i, flag in enumerate(interp_flags) if not flag]
+
+                interp_points = [split_indices[i] for i in interp_idx]
+                orig_points = [split_indices[i] for i in orig_idx]
+
+                combined_idx = sorted(interp_idx + orig_idx)
+                combined_points = [split_indices[i] for i in combined_idx]
+                combined_values = [final_values[i] for i in combined_idx]
+
+                # Line through all final points
+                plt.plot(combined_points,
+                         combined_values,
+                         color="red", linestyle='-', linewidth=2, alpha=0.7,
+                         label="Interpolated & Original Line")
+
+                plt.scatter(interp_points,
+                            [final_values[i] for i in interp_idx],
+                            color="red", marker='x', s=60, label="Interpolated")
+
+                plt.scatter(orig_points,
+                            [final_values[i] for i in orig_idx],
+                            color="orange", marker='o', s=50, label="Selected Original")
+
+                plt.xticks(split_indices)
+                plt.xlabel("Time Step")
+                plt.ylabel("Value")
+                plt.grid(True, axis='y')
+                plt.legend()
+                plt.title(f"Sample {b}, Feature {f}")
+                plt.tight_layout()
+
+                filename = f"sample{b}_feature{f}.png"
+                plt.savefig(os.path.join(plot_dir, filename))
+                plt.close()
+
+    return torch.tensor(output_np, dtype=x_vals.dtype, device=x_vals.device)

@@ -23,7 +23,6 @@ from datetime import datetime
 from pathlib import Path
 from random import SystemRandom
 
-
 # import torchinfo
 from IPython.core.display import HTML
 from torch import Tensor, jit
@@ -31,19 +30,21 @@ from torch import Tensor, jit
 parser = argparse.ArgumentParser(description='Autoformer & Transformer family for Time Series Forecasting')
 
 # basic config
-parser.add_argument("-c",  "--config",       default=None,   type=str,   help="load external config", nargs=2)
+parser.add_argument("-c", "--config", default=None, type=str, help="load external config", nargs=2)
 parser.add_argument('--is_training', type=int, required=True, default=1, help='status')
-parser.add_argument('--train_only', type=bool, required=False, default=False, help='perform training on full input dataset without validation and testing')
+parser.add_argument('--train_only', type=bool, required=False, default=False,
+                    help='perform training on full input dataset without validation and testing')
 parser.add_argument('--model_id', type=str, required=True, default='test', help='model id')
 parser.add_argument('--model', type=str, required=True, default='Autoformer',
                     help='model name, options: [Autoformer, Informer, Transformer]')
-parser.add_argument("-s",  "--seed",         default=0,   type=int,   help="Set the random seed.")
-parser.add_argument("-r",  "--run_id",       default=None,   type=str,   help="run_id")
-parser.add_argument("-fn", "--function", default="C", choices=("L","S","C","Q"), help="type of hidden function (L: linear, S: sine, C: constant)")
+parser.add_argument("-s", "--seed", default=0, type=int, help="Set the random seed.")
+parser.add_argument("-r", "--run_id", default=None, type=str, help="run_id")
+parser.add_argument("-fn", "--function", default="C", choices=("L", "S", "C", "Q"),
+                    help="type of hidden function (L: linear, S: sine, C: constant)")
 # data loader
 parser.add_argument("-dset", "--data", default="ushcn", type=str, help="Name of the dataset")
-parser.add_argument("-ot","--observation_time",default=24, type=int, help ="obersvation time in hours")
-parser.add_argument("-fh","--forecast_horizon",default=24, type=int, help ="forcasting horizon in hours")
+parser.add_argument("-ot", "--observation_time", default=24, type=int, help="obersvation time in hours")
+parser.add_argument("-fh", "--forecast_horizon", default=24, type=int, help="forcasting horizon in hours")
 parser.add_argument('--root_path', type=str, default='./data/ETT/', help='root path of the data file')
 parser.add_argument('--data_path', type=str, default='ETTh1.csv', help='data file')
 parser.add_argument('--features', type=str, default='M',
@@ -58,12 +59,14 @@ parser.add_argument('--seq_len', type=int, default=96, help='input sequence leng
 parser.add_argument('--label_len', type=int, default=48, help='start token length')
 parser.add_argument('--pred_len', type=int, default=96, help='prediction sequence length')
 
-
 # DLinear
-parser.add_argument('--individual', action='store_true', default=False, help='DLinear: a linear layer for each variate(channel) individually')
+parser.add_argument('--individual', action='store_true', default=False,
+                    help='DLinear: a linear layer for each variate(channel) individually')
 # Formers 
-parser.add_argument('--embed_type', type=int, default=0, help='0: default 1: value embedding + temporal embedding + positional embedding 2: value embedding + temporal embedding 3: value embedding + positional embedding 4: value embedding')
-parser.add_argument('--enc_in', type=int, default=7, help='encoder input size') # DLinear with --individual, use this hyperparameter as the number of channels
+parser.add_argument('--embed_type', type=int, default=0,
+                    help='0: default 1: value embedding + temporal embedding + positional embedding 2: value embedding + temporal embedding 3: value embedding + positional embedding 4: value embedding')
+parser.add_argument('--enc_in', type=int, default=7,
+                    help='encoder input size')  # DLinear with --individual, use this hyperparameter as the number of channels
 parser.add_argument('--dec_in', type=int, default=7, help='decoder input size')
 parser.add_argument('--c_out', type=int, default=7, help='output size')
 parser.add_argument('--d_model', type=int, default=512, help='dimension of model')
@@ -85,7 +88,7 @@ parser.add_argument('--do_predict', action='store_true', help='whether to predic
 
 # optimization
 parser.add_argument('--num_workers', type=int, default=0, help='data loader num workers')
-parser.add_argument('--itr', type=int, default=2, help='experiments times')
+parser.add_argument('--itr', type=int, default=1, help='experiments times')
 parser.add_argument('--train_epochs', type=int, default=100, help='train epochs')
 parser.add_argument('--batch_size', type=int, default=1, help='batch size of train input data')
 parser.add_argument('--patience', type=int, default=25, help='early stopping patience')
@@ -94,7 +97,7 @@ parser.add_argument('--des', type=str, default='test', help='exp description')
 parser.add_argument('--loss', type=str, default='mse', help='loss function')
 parser.add_argument('--lradj', type=str, default='type1', help='adjust learning rate')
 parser.add_argument('--use_amp', action='store_true', help='use automatic mixed precision training', default=False)
-parser.add_argument("-f",  "--fold",         default=0,      type=int,   help="fold number")
+parser.add_argument("-f", "--fold", default=0, type=int, help="fold number")
 
 # GPU
 parser.add_argument('--use_gpu', type=bool, default=False, help='use gpu')
@@ -102,6 +105,8 @@ parser.add_argument('--gpu', type=int, default=0, help='gpu')
 parser.add_argument('--use_multi_gpu', action='store_true', help='use multiple gpus', default=False)
 parser.add_argument('--devices', type=str, default='0,1,2,3', help='device ids of multile gpus')
 parser.add_argument('--test_flop', action='store_true', default=False, help='See utils/tools for usage')
+parser.add_argument('-l', '--linear_interpolate', action='store_true', help='linear interpolate')
+parser.add_argument('-n', '--linear_interpolate_num', type=int, default=5, help='linear interpolate number')
 
 # fmt: on
 sys.path.insert(0, "../")
@@ -110,6 +115,7 @@ print(" ".join(sys.argv))
 
 args = parser.parse_args()
 
+print("args",args)
 
 if args.config is not None:
     cfg_file, cfg_id = args.config
@@ -148,25 +154,28 @@ if args.use_gpu and args.use_multi_gpu:
 RUN_ID = args.run_id or datetime.now().isoformat(timespec="seconds")
 CFG_ID = 0 if args.config is None else args.config[1]
 HOME = Path.cwd()
-print("Called at ",datetime.now())
+print("Called at ", datetime.now())
 experiment_id = int(SystemRandom().random() * 10000000)
-print("experiment_id",experiment_id)
+print("experiment_id", experiment_id)
 model_path = f"saved_models/FLD-{args.function}_{args.data}_{str(experiment_id)}.h5"
 
-
 Exp = Exp_Main
-print("now here")
+
 if args.is_training:
-    for ii in range(args.itr):
+    all_mse = []  # To store metrics from each fold
+    for f in range(args.fold):
         # setting record of experiments
-        setting = '{}_{}_{}_ot{}_fh{}_bs{}_f{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_dt{}_{}_{}'.format(
+        setting = ('{}_{}_{}_ot{}_fh{}_lp{}_lpn{}_bs{}_f{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_dt{'
+                   '}_{}').format(
             args.model_id,
             args.model,
             args.data,
             args.observation_time,
             args.forecast_horizon,
+            args.linear_interpolate,
+            args.linear_interpolate_num,
             args.batch_size,
-            args.fold,
+            f,
             args.features,
             args.seq_len,
             args.label_len,
@@ -179,21 +188,36 @@ if args.is_training:
             args.factor,
             args.embed,
             args.distil,
-            args.des, ii)
+            args.des)
 
+        print(f'\n================ Fold {f} ===================')
         exp = Exp(args)  # set experiments
         print('>>>>>>>start training : {}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting))
-        exp.train(setting)
+        exp.train(setting,f)
 
         if not args.train_only:
             print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
-            exp.test(setting)
+            test_mse = exp.test(setting,f)
+            all_mse.append(test_mse.item())
 
         if args.do_predict:
             print('>>>>>>>predicting : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
             exp.predict(setting, True)
 
         torch.cuda.empty_cache()
+
+    if all_mse:
+        all_mse = np.array(all_mse)
+        mean_mse = np.mean(all_mse)
+        std_mse = np.std(all_mse)
+
+        print(f"\n====== 5-Fold Cross-Validation MSE ======")
+        print(f"MSE: {mean_mse:.4f} ± {std_mse:.4f}")
+
+        result_file = os.path.join("./results", f"{args.model}_{args.data}_mse_results.txt")
+        os.makedirs(os.path.dirname(result_file), exist_ok=True)
+        with open(result_file, "w") as f:
+            f.write(f"MSE: {mean_mse:.4f} ± {std_mse:.4f}\n")
 else:
     ii = 0
     setting = '{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_dt{}_{}_{}'.format(args.model_id,

@@ -67,6 +67,8 @@ class USHCN_DeBrouwer2019(SingleFrameDataset):
         df = pandas.read_csv(self.rawdata_paths, dtype=dtypes)
         df = DataFrame(df)
 
+        print("ushcn data ",df)
+
         if df.shape != self.RAWDATA_SHAPE:
             raise ValueError(
                 f"The {df.shape=} is not correct."

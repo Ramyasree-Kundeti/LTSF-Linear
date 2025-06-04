@@ -48,6 +48,9 @@ class Sample(NamedTuple):
     inputs: Inputs
     targets: Tensor
     originals: tuple[Tensor, Tensor]
+    observation_steps: int
+    lp: bool
+    lpn: int
 
     def __repr__(self) -> str:
         r"""Return string representation."""
@@ -76,6 +79,9 @@ class TaskDataset(Dataset):
     tensors: list[tuple[Tensor, Tensor]]
     observation_time: float
     prediction_steps: int
+    observation_steps: int
+    lp:bool
+    lpn:int
 
     def __len__(self) -> int:
         r"""Return the number of samples in the dataset."""
@@ -89,15 +95,16 @@ class TaskDataset(Dataset):
         t, x = self.tensors[key]
         observations = t <= self.observation_time
         first_target = observations.sum()
-        print("first_target",first_target)
         sample_mask = slice(0, first_target)
-        print("sample_mask",sample_mask)
         target_mask = slice(first_target, first_target + self.prediction_steps)
         return Sample(
             key=key,
             inputs=Inputs(t[sample_mask], x[sample_mask], t[target_mask]),
             targets=x[target_mask],
             originals=(t, x),
+            observation_steps= self.observation_steps,
+            lp= self.lp,
+            lpn= self.lpn,
         )
 
     def __repr__(self) -> str:
@@ -202,6 +209,8 @@ class USHCN_DeBrouwer2019(BaseTask):
         condition_time: int = 36,
         forecast_horizon: int = 0,
         num_folds: int = 5,
+        lp: bool = False,
+        lpn: int = 0,
     ):
         super().__init__()
         self.observation_time = int((condition_time / 6) * 25)
@@ -211,7 +220,9 @@ class USHCN_DeBrouwer2019(BaseTask):
             self.prediction_steps = 3  # default value
         else:
             self.prediction_steps = int((forecast_horizon / 6) * 25)
-
+        self.observation_steps = condition_time
+        self.lp = lp
+        self.lpn = lpn
     @cached_property
     def dataset(self) -> DataFrame:
         r"""Load the dataset."""
@@ -339,15 +350,24 @@ class USHCN_DeBrouwer2019(BaseTask):
     def get_dataloader(
         self, key: tuple[int, str], /, **dataloader_kwargs: Any
     ) -> DataLoader:
-        print("IN ushcn dataloader")
+        print("IN USHCN dataloader")
         r"""Return the dataloader for the given key."""
         fold, partition = key
+        print("fold, partition",fold, partition)
         fold_idx = self.folds[fold][partition]
+
+        # Calculate observation counts for stations in this split
+        obs_counts = {station: len(self.dataset.loc[station]) for station in fold_idx}
+        avg_obs = sum(obs_counts.values()) / len(obs_counts) if obs_counts else 0
+        print(f"Fold {fold} {partition} has {len(fold_idx)} stations with avg obs {avg_obs:.2f}")
+
         dataset = TaskDataset(
             [val for idx, val in self.tensors.items() if idx in fold_idx],
             observation_time=self.observation_time,
             prediction_steps=self.prediction_steps,
+            observation_steps=self.observation_steps,
+            lp=self.lp,
+            lpn=self.lpn
         )
         kwargs: dict[str, Any] = {"collate_fn": lambda *x: x} | dataloader_kwargs
-        print("last DataLoader")
         return DataLoader(dataset, **kwargs)

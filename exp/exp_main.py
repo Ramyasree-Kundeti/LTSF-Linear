@@ -34,13 +34,12 @@ class Exp_Main(Exp_Basic):
             'Linear': Linear,
         }
         model = model_dict[self.args.model].Model(self.args).float()
-        print("self.args ",self.args)
 
         if self.args.use_multi_gpu and self.args.use_gpu:
             model = nn.DataParallel(model, device_ids=self.args.device_ids)
         return model
 
-    def _get_data(self, flag):
+    def _get_data(self, f,flag):
         #from tsdm.tasks.mimic_iii_debrouwer2019 import mimic_collate as task_collate_fn
         #data_set, data_loader = data_provider(self.args, flag)
         from tsdm.tasks.physionet2012 import physionet_collate as task_collate_fn
@@ -63,20 +62,21 @@ class Exp_Main(Exp_Basic):
             INPUT_DIM = 102
 
         if self.args.data == "p12":
-            print("In p12")
             from tsdm.tasks.physionet2012 import Physionet2012
 
             TASK = Physionet2012(
-                condition_time=self.args.observation_time, forecast_horizon=self.args.forecast_horizon
+                condition_time=self.args.observation_time, forecast_horizon=self.args.forecast_horizon,
+                lp=self.args.linear_interpolate, lpn=self.args.linear_interpolate_num
             )
             INPUT_DIM = 37
-            print("data downloaded")
+            print("p12 data downloaded")
 
         if self.args.data == "ushcn":
             from tsdm.tasks.ushcn_debrouwer2019 import USHCN_DeBrouwer2019
 
             TASK = USHCN_DeBrouwer2019(
-                condition_time=self.args.observation_time, forecast_horizon=self.args.forecast_horizon
+                condition_time=self.args.observation_time, forecast_horizon=self.args.forecast_horizon,
+                lp=self.args.linear_interpolate, lpn=self.args.linear_interpolate_num
             )
             INPUT_DIM = 5
 
@@ -105,8 +105,13 @@ class Exp_Main(Exp_Basic):
         #EVAL_LOADERS = {"train": INFER_LOADER, "valid": VALID_LOADER, "test": TEST_LOADER}
 
         print("flag ",flag)
-        data_loader = TASK.get_dataloader((self.args.fold, flag), **dloader_config_train)
-        print("data_loader ",data_loader)
+        print("fold ",f)
+        if flag == "train":
+            data_loader = TASK.get_dataloader((f, flag), **dloader_config_train)
+        else:
+            data_loader = TASK.get_dataloader((f, flag), **dloader_config_infer)
+
+
         return data_loader
 
     def _select_optimizer(self):
@@ -146,21 +151,21 @@ class Exp_Main(Exp_Basic):
                             outputs = self.model(batch_x)
                         else:
                             if self.args.output_attention:
-                                outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
+                                outputs = self.model(batch_x, batch_x, dec_inp, batch_y)[0]
                             else:
-                                outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                                outputs = self.model(batch_x, batch_x, dec_inp, batch_y)
                 else:
                     if 'Linear' in self.args.model:
                         outputs = self.model(batch_x)
                     else:
                         if self.args.output_attention:
-                            outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
+                            outputs = self.model(batch_x, batch_x, dec_inp, batch_y)[0]
                         else:
-                            outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                            outputs = self.model(batch_x, batch_x, dec_inp, batch_y)
                 f_dim = -1 if self.args.features == 'MS' else 0
                 outputs = outputs[:, -self.args.forecast_horizon:, f_dim:]
                 batch_y = batch_y[:, -self.args.forecast_horizon:, f_dim:].to(self.device)
-
+                y_mask = y_mask[:, -self.args.forecast_horizon:, f_dim:].to(self.device)
                 pred = outputs.detach().cpu()
                 true = batch_y.detach().cpu()
 
@@ -172,12 +177,12 @@ class Exp_Main(Exp_Basic):
         print("Validation done")
         return total_loss
 
-    def train(self, setting):
+    def train(self, setting,f):
         print("*******Training started********")
-        train_loader = self._get_data(flag='train')
+        train_loader = self._get_data(f,flag='train')
         if not self.args.train_only:
-            vali_loader = self._get_data(flag='valid')
-            test_loader = self._get_data(flag='test')
+            vali_loader = self._get_data(f,flag='valid')
+            test_loader = self._get_data(f,flag='test')
         print("After data is downloaded")
 
         path = os.path.join(self.args.checkpoints, setting)
@@ -186,7 +191,6 @@ class Exp_Main(Exp_Basic):
 
         time_now = time.time()
         batch = next(iter(train_loader))
-        print("batch ",batch)
         torch.set_printoptions(threshold=float('inf'), linewidth=200)
         train_steps = len(train_loader)
         print("train_steps",train_steps)
@@ -209,14 +213,10 @@ class Exp_Main(Exp_Basic):
             for i, (x_time,batch_x, x_mask,y_time, batch_y,y_mask) in enumerate(train_loader):
                 print("============i==========",i)
                 iter_count += 1
-                print("iter_count ",iter_count)
                 model_optim.zero_grad()
                 print("x_time", x_time.shape)
                 print("batch_x", batch_x.shape)
-                print("NaNs in batch_x:", torch.isnan(batch_x).sum())
 
-
-                #visualize_data(x_time,batch_x, x_mask)
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
 
@@ -235,13 +235,14 @@ class Exp_Main(Exp_Basic):
                             outputs = self.model(batch_x)
                         else:
                             if self.args.output_attention:
-                                outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
+                                outputs = self.model(batch_x, batch_x, dec_inp, batch_y)[0]
                             else:
-                                outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                                outputs = self.model(batch_x, batch_x, dec_inp, batch_y)
 
                         f_dim = -1 if self.args.features == 'MS' else 0
                         outputs = outputs[:, -self.args.forecast_horizon:, f_dim:]
                         batch_y = batch_y[:, -self.args.forecast_horizon:, f_dim:].to(self.device)
+                        y_mask = y_mask[:, -self.args.forecast_horizon:, f_dim:].to(self.device)
                         loss = criterion(outputs, batch_y)
                         train_loss.append(loss.item())
                 else:
@@ -249,18 +250,20 @@ class Exp_Main(Exp_Basic):
                             outputs = self.model(batch_x)
                     else:
                         if self.args.output_attention:
-                            outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
+                            outputs = self.model(batch_x, batch_x, dec_inp, batch_y)[0]
                             
                         else:
-                            outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark, batch_y)
-                    # print(outputs.shape,batch_y.shape)
-                    #f_dim = -1 if self.args.features == 'MS' else 0
-                    #outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                    #batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
-                    #print("outputs",outputs)
-                    #print("batch_y",batch_y)
-                    #print("y_mask",y_mask)
-                    loss = MSE_NEW(outputs, batch_y,y_mask)
+                            outputs = self.model(batch_x, batch_x, dec_inp, batch_y, batch_y)
+                    print(outputs.shape,batch_y.shape)
+                    f_dim = -1 if self.args.features == 'MS' else 0
+                    #print("f_dim",f_dim)
+                    outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                    batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                    y_mask = y_mask[:, -self.args.pred_len:, f_dim:].to(self.device)
+                    print("outputs",outputs.shape)
+                    print("batch_y",batch_y.shape)
+                    print("y_mask",y_mask.shape)
+                    loss = MSE_NEW(outputs, batch_y, y_mask)
                     print("loss ",loss)
                     train_loss.append(loss.item())
                     #print("train_loss",train_loss)
@@ -307,11 +310,15 @@ class Exp_Main(Exp_Basic):
 
         return self.model
 
-    def test(self, setting, test=0):
+    def test(self, setting, f,test=0):
         print("Test Started")
         print("********************************")
-        test_loader = self._get_data(flag='test')
-        
+        test_loader = self._get_data(f,flag='test')
+        #if self.args.data == "ushcn":
+        #    if self.args.forecast_horizon == 0:
+        #        self.args.forecast_horizon = 3  # default value
+        #    else:
+        #        self.args.forecast_horizon = int((self.args.forecast_horizon / 6) * 25)
         if test:
             print('loading model')
             self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth')))
@@ -333,8 +340,8 @@ class Exp_Main(Exp_Basic):
                 #batch_y_mark = batch_y_mark.float().to(self.device)
 
                 # decoder input
-                dec_inp = torch.zeros_like(batch_y[:, -self.args.forecast_horizon:, :]).float()
-                dec_inp = torch.cat([batch_y[:, :self.args.forecast_horizon, :], dec_inp], dim=1).float().to(self.device)
+                #dec_inp = torch.zeros_like(batch_y[:, -self.args.forecast_horizon:, :]).float()
+                #dec_inp = torch.cat([batch_y[:, :self.args.forecast_horizon, :], dec_inp], dim=1).float().to(self.device)
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
@@ -342,25 +349,29 @@ class Exp_Main(Exp_Basic):
                             outputs = self.model(batch_x)
                         else:
                             if self.args.output_attention:
-                                outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
+                                outputs = self.model(batch_x, batch_x, dec_inp, batch_y)[0]
                             else:
-                                outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                                outputs = self.model(batch_x, batch_x, dec_inp, batch_y)
                 else:
                     if 'Linear' in self.args.model:
                             outputs = self.model(batch_x)
                     else:
                         if self.args.output_attention:
-                            outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
+                            outputs = self.model(batch_x, batch_x, dec_inp, batch_y)[0]
 
                         else:
-                            outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                            outputs = self.model(batch_x, batch_x, dec_inp, batch_y)
 
                 f_dim = -1 if self.args.features == 'MS' else 0
-                # print(outputs.shape,batch_y.shape)
                 outputs = outputs[:, -self.args.forecast_horizon:, f_dim:]
                 batch_y = batch_y[:, -self.args.forecast_horizon:, f_dim:].to(self.device)
-                outputs = outputs.detach().cpu().numpy()
-                batch_y = batch_y.detach().cpu().numpy()
+                y_mask = y_mask[:, -self.args.forecast_horizon:, f_dim:].to(self.device)
+                #outputs = outputs.detach().cpu().numpy()
+                #batch_y = batch_y.detach().cpu().numpy()
+                #y_mask = y_mask.detach().cpu().numpy()
+                print("outputs ", outputs.shape)
+                print("batch_y ", batch_y.shape)
+                print("y_mask",y_mask.shape)
 
                 pred = outputs  # outputs.detach().cpu().numpy()  # .squeeze()
                 true = batch_y  # batch_y.detach().cpu().numpy()  # .squeeze()
@@ -387,13 +398,14 @@ class Exp_Main(Exp_Basic):
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
-        mae, mse, rmse, mape, mspe, rse, corr = metric(preds, trues)
+        #mae, mse, rmse, mape, mspe, rse, corr = metric(preds, trues)
         #print('mse:{}, mae:{}'.format(mse, mae))
+        print()
         test_mse = MSE_NEW(batch_y,outputs,y_mask)
         print("test_mse ",test_mse)
         f = open("result.txt", 'a')
         f.write(setting + "  \n")
-        f.write('test_mse, corr:{}'.format(test_mse, corr))
+        f.write('test_mse:{}'.format(test_mse))
         f.write('\n')
         f.write('\n')
         f.close()
@@ -402,7 +414,7 @@ class Exp_Main(Exp_Basic):
         np.save(folder_path + 'pred.npy', preds)
         # np.save(folder_path + 'true.npy', trues)
         # np.save(folder_path + 'x.npy', inputx)
-        return
+        return test_mse
 
     def predict(self, setting, load=False):
         pred_data, pred_loader = self._get_data(flag='pred')
